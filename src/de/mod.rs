@@ -2156,7 +2156,7 @@ use crate::{
     de::map::ElementMapAccess,
     encoding::Decoder,
     errors::Error,
-    escape::{parse_number, EscapeError},
+    escape::{EscapeError, parse_number},
     events::{BytesCData, BytesEnd, BytesRef, BytesStart, BytesText, Event},
     name::QName,
     reader::NsReader,
@@ -2844,10 +2844,10 @@ where
     #[cfg(feature = "overlapped-lists")]
     #[inline]
     fn skip_event(&mut self, event: DeEvent<'de>) -> Result<(), DeError> {
-        if let Some(max) = self.limit {
-            if self.write.len() >= max.get() {
-                return Err(DeError::TooManyEvents(max));
-            }
+        if let Some(max) = self.limit
+            && self.write.len() >= max.get()
+        {
+            return Err(DeError::TooManyEvents(max));
         }
         self.write.push_back(event);
         Ok(())

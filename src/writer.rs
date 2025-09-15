@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::io::{self, Write};
 
 use crate::encoding::UTF8_BOM;
-use crate::events::{attributes::Attribute, BytesCData, BytesPI, BytesStart, BytesText, Event};
+use crate::events::{BytesCData, BytesPI, BytesStart, BytesText, Event, attributes::Attribute};
 
 #[cfg(feature = "async-tokio")]
 mod async_tokio;
@@ -233,15 +233,16 @@ impl<W: Write> Writer<W> {
     /// Writes bytes
     #[inline]
     pub(crate) fn write(&mut self, value: &[u8]) -> io::Result<()> {
-        self.writer.write_all(value)}
+        self.writer.write_all(value)
+    }
 
     #[inline]
     fn write_wrapped(&mut self, before: &[u8], value: &[u8], after: &[u8]) -> io::Result<()> {
-        if let Some(ref i) = self.indent {
-            if i.should_line_break {
-                self.writer.write_all(b"\n")?;
-                self.writer.write_all(i.current())?;
-            }
+        if let Some(ref i) = self.indent
+            && i.should_line_break
+        {
+            self.writer.write_all(b"\n")?;
+            self.writer.write_all(i.current())?;
         }
         self.write(before)?;
         self.write(value)?;

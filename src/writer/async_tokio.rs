@@ -73,11 +73,11 @@ impl<W: AsyncWrite + Unpin> Writer<W> {
         value: &[u8],
         after: &[u8],
     ) -> Result<()> {
-        if let Some(ref i) = self.indent {
-            if i.should_line_break {
-                self.writer.write_all(b"\n").await?;
-                self.writer.write_all(i.current()).await?;
-            }
+        if let Some(ref i) = self.indent
+            && i.should_line_break
+        {
+            self.writer.write_all(b"\n").await?;
+            self.writer.write_all(i.current()).await?;
         }
         self.write_async(before).await?;
         self.write_async(value).await?;
