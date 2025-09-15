@@ -253,7 +253,7 @@ impl Default for Config {
 macro_rules! read_event_impl {
     (
         $self:ident, $buf:ident,
-        $reader:expr,
+        $reader:expr_2021,
         $read_until_close:ident
         $(, $await:ident)?
     ) => {{
@@ -402,7 +402,7 @@ macro_rules! read_event_impl {
 macro_rules! read_until_close {
     (
         $self:ident, $buf:ident,
-        $reader:expr
+        $reader:expr_2021
         $(, $await:ident)?
     ) => {{
         $self.state.state = ParseState::InsideText;
@@ -486,7 +486,7 @@ macro_rules! read_until_close {
 macro_rules! read_to_end {
     (
         // $self: &mut Reader
-        $self:expr, $end:expr, $buf:expr,
+        $self:expr_2021, $end:expr_2021, $buf:expr_2021,
         $read_event:ident,
         // Code block that performs clearing of internal buffer after read of each event
         $clear:block
@@ -1222,7 +1222,7 @@ impl BangType {
                     }
                 }
             }
-            Self::DocType(ref mut balance) => {
+            Self::DocType(balance) => {
                 for i in memchr::memchr2_iter(b'<', b'>', chunk) {
                     if chunk[i] == b'<' {
                         *balance += 1;
@@ -1260,7 +1260,7 @@ mod test {
             // constructor of the XML source on which internal functions will be called
             $source:path,
             // constructor of the buffer to which read data will stored
-            $buf:expr
+            $buf:expr_2021
             $(, $async:ident, $await:ident)?
         ) => {
             mod read_bang_element {

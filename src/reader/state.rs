@@ -255,10 +255,10 @@ impl ReaderState {
 
                 // Try getting encoding from the declaration event
                 #[cfg(feature = "encoding")]
-                if self.encoding.can_be_refined() {
-                    if let Some(encoding) = event.encoder() {
-                        self.encoding = EncodingRef::XmlDetected(encoding);
-                    }
+                if self.encoding.can_be_refined()
+                    && let Some(encoding) = event.encoder()
+                {
+                    self.encoding = EncodingRef::XmlDetected(encoding);
                 }
 
                 Ok(Event::Decl(event))

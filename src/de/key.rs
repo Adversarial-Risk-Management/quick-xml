@@ -95,7 +95,7 @@ impl<'i, 'd> QNameDeserializer<'i, 'd> {
             // we also want to map to the full name for `xml:xxx`, because `xml:xxx` attributes
             // can apper only in this literal form, as `xml` prefix cannot be redeclared or unbound
             let (local, prefix_opt) = name.decompose();
-            if prefix_opt.map_or(false, |prefix| prefix.is_xml()) {
+            if prefix_opt.is_some_and(|prefix| prefix.is_xml()) {
                 decoder.decode_into(name.into_inner(), key_buf)?;
             } else {
                 decoder.decode_into(local.into_inner(), key_buf)?;

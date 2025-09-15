@@ -5,7 +5,7 @@ use quick_xml::events::{BytesCData, BytesDecl, BytesEnd, BytesPI, BytesStart, By
 use quick_xml::reader::{NsReader, Reader};
 
 macro_rules! ok {
-    ($test:ident($xml:literal) => $pos:literal : $event:expr) => {
+    ($test:ident($xml:literal) => $pos:literal : $event:expr_2021) => {
         mod $test {
             use super::*;
 
@@ -90,7 +90,7 @@ mod syntax {
     use super::*;
 
     macro_rules! err {
-        ($test:ident($xml:literal) => $pos:expr, $cause:expr) => {
+        ($test:ident($xml:literal) => $pos:expr_2021, $cause:expr_2021) => {
             mod $test {
                 use super::*;
 
@@ -265,7 +265,7 @@ mod syntax {
                 }
             }
         };
-        ($test:ident($xml:literal) => $cause:expr) => {
+        ($test:ident($xml:literal) => $cause:expr_2021) => {
             err!($test($xml) => $xml.len() as u64, $cause);
         };
     }
@@ -474,7 +474,7 @@ mod ill_formed {
     use quick_xml::errors::IllFormedError;
 
     macro_rules! err {
-        ($test:ident($xml:literal) => $pos:literal : $cause:expr) => {
+        ($test:ident($xml:literal) => $pos:literal : $cause:expr_2021) => {
             mod $test {
                 use super::*;
 
@@ -659,7 +659,7 @@ mod ill_formed {
 
     /// Performs 3 reads, the first and third ones should be successful
     macro_rules! err2 {
-        ($test:ident($xml:literal) => $pos:literal : $cause:expr) => {
+        ($test:ident($xml:literal) => $pos:literal : $cause:expr_2021) => {
             mod $test {
                 use super::*;
 
