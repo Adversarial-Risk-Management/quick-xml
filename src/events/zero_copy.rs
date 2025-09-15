@@ -35,10 +35,6 @@
 //! [`Writer`]: crate::writer::Writer
 //! [`Event`]: crate::events::Event
 
-pub mod attributes;
-
-mod zero_copy;
-
 #[cfg(feature = "encoding")]
 use encoding_rs::Encoding;
 use std::borrow::Cow;
@@ -55,7 +51,9 @@ use crate::escape::{
     partial_escape, EscapeError,
 };
 use crate::name::{LocalName, QName};
-use crate::utils::{name_len, trim_xml_end, trim_xml_start, write_cow_string, Bytes};
+use crate::utils::{
+    name_len, trim_xml_end, trim_xml_start, write_byte_string, write_cow_string, Bytes,
+};
 use attributes::{AttrError, Attribute, Attributes};
 
 /// Opening tag data (`Event::Start`), with optional attributes: `<name attr="value">`.
@@ -93,7 +91,7 @@ use attributes::{AttrError, Attribute, Attributes};
 #[derive(Clone, Eq, PartialEq)]
 pub struct BytesStart<'a> {
     /// content of the element, before any utf8 conversion
-    pub(crate) buf: Cow<'a, [u8]>,
+    pub(crate) buf: &'a [u8],
     /// end of the element name, the name starts at that the start of `buf`
     pub(crate) name_len: usize,
     /// Encoding used for `buf`
@@ -103,9 +101,9 @@ pub struct BytesStart<'a> {
 impl<'a> BytesStart<'a> {
     /// Internal constructor, used by `Reader`. Supplies data in reader's encoding
     #[inline]
-    pub(crate) const fn wrap(content: &'a [u8], name_len: usize, decoder: Decoder) -> Self {
+    pub const fn wrap(content: &'a [u8], name_len: usize, decoder: Decoder) -> Self {
         BytesStart {
-            buf: Cow::Borrowed(content),
+            buf: content,
             name_len,
             decoder,
         }
@@ -117,11 +115,10 @@ impl<'a> BytesStart<'a> {
     ///
     /// `name` must be a valid name.
     #[inline]
-    pub fn new<C: Into<Cow<'a, str>>>(name: C) -> Self {
-        let buf = str_cow_to_bytes(name);
+    pub fn new(name: &'a str) -> Self {
         BytesStart {
-            name_len: buf.len(),
-            buf,
+            name_len: name.len(),
+            buf: name.as_bytes(),
             decoder: Decoder::utf8(),
         }
     }
@@ -134,64 +131,64 @@ impl<'a> BytesStart<'a> {
     /// must be correctly-formed attributes. Neither are checked, it is possible
     /// to generate invalid XML if `content` or `name_len` are incorrect.
     #[inline]
-    pub fn from_content<C: Into<Cow<'a, str>>>(content: C, name_len: usize) -> Self {
+    pub fn from_content(content: &'a str, name_len: usize) -> Self {
         BytesStart {
-            buf: str_cow_to_bytes(content),
+            buf: content.as_bytes(),
             name_len,
             decoder: Decoder::utf8(),
         }
     }
 
-    /// Converts the event into an owned event.
-    pub fn into_owned(self) -> BytesStart<'static> {
-        BytesStart {
-            buf: Cow::Owned(self.buf.into_owned()),
-            name_len: self.name_len,
-            decoder: self.decoder,
-        }
-    }
+    // /// Converts the event into an owned event.
+    // pub fn into_owned(self) -> BytesStart<'static> {
+    //     BytesStart {
+    //         buf: Cow::Owned(self.buf.into_owned()),
+    //         name_len: self.name_len,
+    //         decoder: self.decoder,
+    //     }
+    // }
 
-    /// Converts the event into an owned event without taking ownership of Event
-    pub fn to_owned(&self) -> BytesStart<'static> {
-        BytesStart {
-            buf: Cow::Owned(self.buf.clone().into_owned()),
-            name_len: self.name_len,
-            decoder: self.decoder,
-        }
-    }
+    // /// Converts the event into an owned event without taking ownership of Event
+    // pub fn to_owned(&self) -> BytesStart<'static> {
+    //     BytesStart {
+    //         buf: Cow::Owned(self.buf.clone().into_owned()),
+    //         name_len: self.name_len,
+    //         decoder: self.decoder,
+    //     }
+    // }
 
-    /// Converts the event into a borrowed event. Most useful when paired with [`to_end`].
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use quick_xml::events::{BytesStart, Event};
-    /// # use quick_xml::writer::Writer;
-    /// # use quick_xml::Error;
-    ///
-    /// struct SomeStruct<'a> {
-    ///     attrs: BytesStart<'a>,
-    ///     // ...
-    /// }
-    /// # impl<'a> SomeStruct<'a> {
-    /// # fn example(&self) -> Result<(), Error> {
-    /// # let mut writer = Writer::new(Vec::new());
-    ///
-    /// writer.write_event(Event::Start(self.attrs.borrow()))?;
-    /// // ...
-    /// writer.write_event(Event::End(self.attrs.to_end()))?;
-    /// # Ok(())
-    /// # }}
-    /// ```
-    ///
-    /// [`to_end`]: Self::to_end
-    pub fn borrow(&self) -> BytesStart<'_> {
-        BytesStart {
-            buf: Cow::Borrowed(&self.buf),
-            name_len: self.name_len,
-            decoder: self.decoder,
-        }
-    }
+    // /// Converts the event into a borrowed event. Most useful when paired with [`to_end`].
+    // ///
+    // /// # Example
+    // ///
+    // /// ```
+    // /// use quick_xml::events::{BytesStart, Event};
+    // /// # use quick_xml::writer::Writer;
+    // /// # use quick_xml::Error;
+    // ///
+    // /// struct SomeStruct<'a> {
+    // ///     attrs: BytesStart<'a>,
+    // ///     // ...
+    // /// }
+    // /// # impl<'a> SomeStruct<'a> {
+    // /// # fn example(&self) -> Result<(), Error> {
+    // /// # let mut writer = Writer::new(Vec::new());
+    // ///
+    // /// writer.write_event(Event::Start(self.attrs.borrow()))?;
+    // /// // ...
+    // /// writer.write_event(Event::End(self.attrs.to_end()))?;
+    // /// # Ok(())
+    // /// # }}
+    // /// ```
+    // ///
+    // /// [`to_end`]: Self::to_end
+    // pub fn borrow(&self) -> BytesStart<'_> {
+    //     BytesStart {
+    //         buf: Cow::Borrowed(&self.buf),
+    //         name_len: self.name_len,
+    //         decoder: self.decoder,
+    //     }
+    // }
 
     /// Creates new paired close tag
     #[inline]
@@ -227,62 +224,50 @@ impl<'a> BytesStart<'a> {
     pub fn local_name(&self) -> LocalName<'_> {
         self.name().into()
     }
-
-    /// Edit the name of the BytesStart in-place
-    ///
-    /// # Warning
-    ///
-    /// `name` must be a valid name.
-    pub fn set_name(&mut self, name: &[u8]) -> &mut BytesStart<'a> {
-        let bytes = self.buf.to_mut();
-        bytes.splice(..self.name_len, name.iter().cloned());
-        self.name_len = name.len();
-        self
-    }
 }
 
 /// Attribute-related methods
 impl<'a> BytesStart<'a> {
-    /// Consumes `self` and yield a new `BytesStart` with additional attributes from an iterator.
-    ///
-    /// The yielded items must be convertible to [`Attribute`] using `Into`.
-    pub fn with_attributes<'b, I>(mut self, attributes: I) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Into<Attribute<'b>>,
-    {
-        self.extend_attributes(attributes);
-        self
-    }
+    // /// Consumes `self` and yield a new `BytesStart` with additional attributes from an iterator.
+    // ///
+    // /// The yielded items must be convertible to [`Attribute`] using `Into`.
+    // pub fn with_attributes<'b, I>(mut self, attributes: I) -> Self
+    // where
+    //     I: IntoIterator,
+    //     I::Item: Into<Attribute<'b>>,
+    // {
+    //     self.extend_attributes(attributes);
+    //     self
+    // }
 
-    /// Add additional attributes to this tag using an iterator.
-    ///
-    /// The yielded items must be convertible to [`Attribute`] using `Into`.
-    pub fn extend_attributes<'b, I>(&mut self, attributes: I) -> &mut BytesStart<'a>
-    where
-        I: IntoIterator,
-        I::Item: Into<Attribute<'b>>,
-    {
-        for attr in attributes {
-            self.push_attribute(attr);
-        }
-        self
-    }
+    // /// Add additional attributes to this tag using an iterator.
+    // ///
+    // /// The yielded items must be convertible to [`Attribute`] using `Into`.
+    // pub fn extend_attributes<'b, I>(&mut self, attributes: I) -> &mut BytesStart<'a>
+    // where
+    //     I: IntoIterator,
+    //     I::Item: Into<Attribute<'b>>,
+    // {
+    //     for attr in attributes {
+    //         self.push_attribute(attr);
+    //     }
+    //     self
+    // }
 
-    /// Adds an attribute to this element.
-    pub fn push_attribute<'b, A>(&mut self, attr: A)
-    where
-        A: Into<Attribute<'b>>,
-    {
-        self.buf.to_mut().push(b' ');
-        self.push_attr(attr.into());
-    }
+    // /// Adds an attribute to this element.
+    // pub fn push_attribute<'b, A>(&mut self, attr: A)
+    // where
+    //     A: Into<Attribute<'b>>,
+    // {
+    //     self.buf.to_mut().push(b' ');
+    //     self.push_attr(attr.into());
+    // }
 
-    /// Remove all attributes from the ByteStart
-    pub fn clear_attributes(&mut self) -> &mut BytesStart<'a> {
-        self.buf.to_mut().truncate(self.name_len);
-        self
-    }
+    // /// Remove all attributes from the ByteStart
+    // pub fn clear_attributes(&mut self) -> &mut BytesStart<'a> {
+    //     self.buf.to_mut().truncate(self.name_len);
+    //     self
+    // }
 
     /// Returns an iterator over the attributes of this tag.
     pub fn attributes(&self) -> Attributes<'_> {
@@ -315,31 +300,31 @@ impl<'a> BytesStart<'a> {
         Ok(None)
     }
 
-    /// Adds an attribute to this element.
-    pub(crate) fn push_attr<'b>(&mut self, attr: Attribute<'b>) {
-        let bytes = self.buf.to_mut();
-        bytes.extend_from_slice(attr.key.as_ref());
-        bytes.extend_from_slice(b"=\"");
-        // FIXME: need to escape attribute content
-        bytes.extend_from_slice(attr.value.as_ref());
-        bytes.push(b'"');
-    }
+    // /// Adds an attribute to this element.
+    // pub(crate) fn push_attr<'b>(&mut self, attr: Attribute<'b>) {
+    //     let bytes = self.buf.to_mut();
+    //     bytes.extend_from_slice(attr.key.as_ref());
+    //     bytes.extend_from_slice(b"=\"");
+    //     // FIXME: need to escape attribute content
+    //     bytes.extend_from_slice(attr.value.as_ref());
+    //     bytes.push(b'"');
+    // }
 
-    /// Adds new line in existing element
-    pub(crate) fn push_newline(&mut self) {
-        self.buf.to_mut().push(b'\n');
-    }
+    // /// Adds new line in existing element
+    // pub(crate) fn push_newline(&mut self) {
+    //     self.buf.to_mut().push(b'\n');
+    // }
 
-    /// Adds indentation bytes in existing element
-    pub(crate) fn push_indent(&mut self, indent: &[u8]) {
-        self.buf.to_mut().extend_from_slice(indent);
-    }
+    // /// Adds indentation bytes in existing element
+    // pub(crate) fn push_indent(&mut self, indent: &[u8]) {
+    //     self.buf.to_mut().extend_from_slice(indent);
+    // }
 }
 
 impl<'a> Debug for BytesStart<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "BytesStart {{ buf: ")?;
-        write_cow_string(f, &self.buf)?;
+        write_byte_string(f, self.buf)?;
         write!(f, ", name_len: {} }}", self.name_len)
     }
 }
@@ -359,13 +344,14 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesStart<'a> {
         if s.is_empty() || !s.chars().all(char::is_alphanumeric) {
             return Err(arbitrary::Error::IncorrectFormat);
         }
-        let mut result = Self::new(s);
-        result.extend_attributes(Vec::<(&str, &str)>::arbitrary(u)?);
-        Ok(result)
+        unimplemented!("No valid arbitrary implementation");
+        // let mut result = Self::new(s);
+        // result.extend_attributes(Vec::<(&str, &str)>::arbitrary(u)?.into_iter());
+        // Ok(result)
     }
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -485,7 +471,7 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesEnd<'a> {
         Ok(Self::new(<&str>::arbitrary(u)?))
     }
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -694,7 +680,7 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesText<'a> {
     }
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -979,7 +965,7 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesCData<'a> {
         Ok(Self::new(<&str>::arbitrary(u)?))
     }
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -1071,40 +1057,36 @@ impl<'a> BytesPI<'a> {
     ///
     /// `content` must not contain the `?>` sequence.
     #[inline]
-    pub fn new<C: Into<Cow<'a, str>>>(content: C) -> Self {
-        let buf = str_cow_to_bytes(content);
-        let name_len = name_len(&buf);
+    pub fn new(content: &'a str) -> Self {
+        // let buf = str_cow_to_bytes(content);
+        // let name_len = name_len(&buf);
         Self {
-            content: BytesStart {
-                buf,
-                name_len,
-                decoder: Decoder::utf8(),
-            },
+            content: BytesStart::new(content),
         }
     }
 
-    /// Ensures that all data is owned to extend the object's lifetime if
-    /// necessary.
-    #[inline]
-    pub fn into_owned(self) -> BytesPI<'static> {
-        BytesPI {
-            content: self.content.into_owned(),
-        }
-    }
+    // /// Ensures that all data is owned to extend the object's lifetime if
+    // /// necessary.
+    // #[inline]
+    // pub fn into_owned(self) -> BytesPI<'static> {
+    //     BytesPI {
+    //         content: self.content.into_owned().into(),
+    //     }
+    // }
 
     /// Extracts the inner `Cow` from the `BytesPI` event container.
     #[inline]
-    pub fn into_inner(self) -> Cow<'a, [u8]> {
+    pub fn into_inner(self) -> &'a [u8] {
         self.content.buf
     }
 
-    /// Converts the event into a borrowed event.
-    #[inline]
-    pub fn borrow(&self) -> BytesPI<'_> {
-        BytesPI {
-            content: self.content.borrow(),
-        }
-    }
+    // /// Converts the event into a borrowed event.
+    // #[inline]
+    // pub fn borrow(&self) -> BytesPI<'_> {
+    //     BytesPI {
+    //         content: self.content.borrow(),
+    //     }
+    // }
 
     /// A target used to identify the application to which the instruction is directed.
     ///
@@ -1178,7 +1160,7 @@ impl<'a> BytesPI<'a> {
 impl<'a> Debug for BytesPI<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "BytesPI {{ content: ")?;
-        write_cow_string(f, &self.content.buf)?;
+        write_byte_string(f, &self.content.buf)?;
         write!(f, " }}")
     }
 }
@@ -1197,7 +1179,7 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesPI<'a> {
         Ok(Self::new(<&str>::arbitrary(u)?))
     }
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -1232,52 +1214,52 @@ pub struct BytesDecl<'a> {
 }
 
 impl<'a> BytesDecl<'a> {
-    /// Constructs a new `XmlDecl` from the (mandatory) _version_ (should be `1.0` or `1.1`),
-    /// the optional _encoding_ (e.g., `UTF-8`) and the optional _standalone_ (`yes` or `no`)
-    /// attribute.
-    ///
-    /// Does not escape any of its inputs. Always uses double quotes to wrap the attribute values.
-    /// The caller is responsible for escaping attribute values. Shouldn't usually be relevant since
-    /// the double quote character is not allowed in any of the attribute values.
-    pub fn new(
-        version: &str,
-        encoding: Option<&str>,
-        standalone: Option<&str>,
-    ) -> BytesDecl<'static> {
-        // Compute length of the buffer based on supplied attributes
-        // ' encoding=""'   => 12
-        let encoding_attr_len = if let Some(xs) = encoding {
-            12 + xs.len()
-        } else {
-            0
-        };
-        // ' standalone=""' => 14
-        let standalone_attr_len = if let Some(xs) = standalone {
-            14 + xs.len()
-        } else {
-            0
-        };
-        // 'xml version=""' => 14
-        let mut buf = String::with_capacity(14 + encoding_attr_len + standalone_attr_len);
+    // /// Constructs a new `XmlDecl` from the (mandatory) _version_ (should be `1.0` or `1.1`),
+    // /// the optional _encoding_ (e.g., `UTF-8`) and the optional _standalone_ (`yes` or `no`)
+    // /// attribute.
+    // ///
+    // /// Does not escape any of its inputs. Always uses double quotes to wrap the attribute values.
+    // /// The caller is responsible for escaping attribute values. Shouldn't usually be relevant since
+    // /// the double quote character is not allowed in any of the attribute values.
+    // pub fn new(
+    //     version: &str,
+    //     encoding: Option<&str>,
+    //     standalone: Option<&str>,
+    // ) -> BytesDecl<'static> {
+    //     // Compute length of the buffer based on supplied attributes
+    //     // ' encoding=""'   => 12
+    //     let encoding_attr_len = if let Some(xs) = encoding {
+    //         12 + xs.len()
+    //     } else {
+    //         0
+    //     };
+    //     // ' standalone=""' => 14
+    //     let standalone_attr_len = if let Some(xs) = standalone {
+    //         14 + xs.len()
+    //     } else {
+    //         0
+    //     };
+    //     // 'xml version=""' => 14
+    //     let mut buf = String::with_capacity(14 + encoding_attr_len + standalone_attr_len);
 
-        buf.push_str("xml version=\"");
-        buf.push_str(version);
+    //     buf.push_str("xml version=\"");
+    //     buf.push_str(version);
 
-        if let Some(encoding_val) = encoding {
-            buf.push_str("\" encoding=\"");
-            buf.push_str(encoding_val);
-        }
+    //     if let Some(encoding_val) = encoding {
+    //         buf.push_str("\" encoding=\"");
+    //         buf.push_str(encoding_val);
+    //     }
 
-        if let Some(standalone_val) = standalone {
-            buf.push_str("\" standalone=\"");
-            buf.push_str(standalone_val);
-        }
-        buf.push('"');
+    //     if let Some(standalone_val) = standalone {
+    //         buf.push_str("\" standalone=\"");
+    //         buf.push_str(standalone_val);
+    //     }
+    //     buf.push('"');
 
-        BytesDecl {
-            content: BytesStart::from_content(buf, 3),
-        }
-    }
+    //     BytesDecl {
+    //         content: BytesStart::from_content(buf, 3),
+    //     }
+    // }
 
     /// Creates a `BytesDecl` from a `BytesStart`
     pub const fn from_start(start: BytesStart<'a>) -> Self {
@@ -1447,20 +1429,20 @@ impl<'a> BytesDecl<'a> {
             .and_then(|e| Encoding::for_label(&e))
     }
 
-    /// Converts the event into an owned event.
-    pub fn into_owned(self) -> BytesDecl<'static> {
-        BytesDecl {
-            content: self.content.into_owned(),
-        }
-    }
+    // /// Converts the event into an owned event.
+    // pub fn into_owned(self) -> BytesDecl<'static> {
+    //     BytesDecl {
+    //         content: self.content.into_owned(),
+    //     }
+    // }
 
-    /// Converts the event into a borrowed event.
-    #[inline]
-    pub fn borrow(&self) -> BytesDecl<'_> {
-        BytesDecl {
-            content: self.content.borrow(),
-        }
-    }
+    // /// Converts the event into a borrowed event.
+    // #[inline]
+    // pub fn borrow(&self) -> BytesDecl<'_> {
+    //     BytesDecl {
+    //         content: self.content.borrow(),
+    //     }
+    // }
 }
 
 impl<'a> Deref for BytesDecl<'a> {
@@ -1474,15 +1456,16 @@ impl<'a> Deref for BytesDecl<'a> {
 #[cfg(feature = "arbitrary")]
 impl<'a> arbitrary::Arbitrary<'a> for BytesDecl<'a> {
     fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self::new(
-            <&str>::arbitrary(u)?,
-            Option::<&str>::arbitrary(u)?,
-            Option::<&str>::arbitrary(u)?,
-        ))
+        unimplemented!();
+        // Ok(Self::new(
+        //     <&str>::arbitrary(u)?,
+        //     Option::<&str>::arbitrary(u)?,
+        //     Option::<&str>::arbitrary(u)?,
+        // ))
     }
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        <&str as arbitrary::Arbitrary>::size_hint(depth)
+        return <&str as arbitrary::Arbitrary>::size_hint(depth);
     }
 }
 
@@ -1727,41 +1710,41 @@ pub enum Event<'a> {
 }
 
 impl<'a> Event<'a> {
-    /// Converts the event to an owned version, untied to the lifetime of
-    /// buffer used when reading but incurring a new, separate allocation.
-    pub fn into_owned(self) -> Event<'static> {
-        match self {
-            Event::Start(e) => Event::Start(e.into_owned()),
-            Event::End(e) => Event::End(e.into_owned()),
-            Event::Empty(e) => Event::Empty(e.into_owned()),
-            Event::Text(e) => Event::Text(e.into_owned()),
-            Event::Comment(e) => Event::Comment(e.into_owned()),
-            Event::CData(e) => Event::CData(e.into_owned()),
-            Event::Decl(e) => Event::Decl(e.into_owned()),
-            Event::PI(e) => Event::PI(e.into_owned()),
-            Event::DocType(e) => Event::DocType(e.into_owned()),
-            Event::GeneralRef(e) => Event::GeneralRef(e.into_owned()),
-            Event::Eof => Event::Eof,
-        }
-    }
+    // /// Converts the event to an owned version, untied to the lifetime of
+    // /// buffer used when reading but incurring a new, separate allocation.
+    // pub fn into_owned(self) -> Event<'static> {
+    //     match self {
+    //         Event::Start(e) => Event::Start(e.into_owned()),
+    //         Event::End(e) => Event::End(e.into_owned()),
+    //         Event::Empty(e) => Event::Empty(e.into_owned()),
+    //         Event::Text(e) => Event::Text(e.into_owned()),
+    //         Event::Comment(e) => Event::Comment(e.into_owned()),
+    //         Event::CData(e) => Event::CData(e.into_owned()),
+    //         Event::Decl(e) => Event::Decl(e.into_owned()),
+    //         Event::PI(e) => Event::PI(e.into_owned()),
+    //         Event::DocType(e) => Event::DocType(e.into_owned()),
+    //         Event::GeneralRef(e) => Event::GeneralRef(e.into_owned()),
+    //         Event::Eof => Event::Eof,
+    //     }
+    // }
 
-    /// Converts the event into a borrowed event.
-    #[inline]
-    pub fn borrow(&self) -> Event<'_> {
-        match self {
-            Event::Start(e) => Event::Start(e.borrow()),
-            Event::End(e) => Event::End(e.borrow()),
-            Event::Empty(e) => Event::Empty(e.borrow()),
-            Event::Text(e) => Event::Text(e.borrow()),
-            Event::Comment(e) => Event::Comment(e.borrow()),
-            Event::CData(e) => Event::CData(e.borrow()),
-            Event::Decl(e) => Event::Decl(e.borrow()),
-            Event::PI(e) => Event::PI(e.borrow()),
-            Event::DocType(e) => Event::DocType(e.borrow()),
-            Event::GeneralRef(e) => Event::GeneralRef(e.borrow()),
-            Event::Eof => Event::Eof,
-        }
-    }
+    // /// Converts the event into a borrowed event.
+    // #[inline]
+    // pub fn borrow(&self) -> Event<'_> {
+    //     match self {
+    //         Event::Start(e) => Event::Start(e.borrow()),
+    //         Event::End(e) => Event::End(e.borrow()),
+    //         Event::Empty(e) => Event::Empty(e.borrow()),
+    //         Event::Text(e) => Event::Text(e.borrow()),
+    //         Event::Comment(e) => Event::Comment(e.borrow()),
+    //         Event::CData(e) => Event::CData(e.borrow()),
+    //         Event::Decl(e) => Event::Decl(e.borrow()),
+    //         Event::PI(e) => Event::PI(e.borrow()),
+    //         Event::DocType(e) => Event::DocType(e.borrow()),
+    //         Event::GeneralRef(e) => Event::GeneralRef(e.borrow()),
+    //         Event::Eof => Event::Eof,
+    //     }
+    // }
 }
 
 impl<'a> Deref for Event<'a> {
@@ -1827,28 +1810,28 @@ mod test {
         assert_eq!(b.name(), QName(b"test"));
     }
 
-    #[test]
-    fn bytestart_set_name() {
-        let mut b = BytesStart::new("test");
-        assert_eq!(b.len(), 4);
-        assert_eq!(b.name(), QName(b"test"));
-        assert_eq!(b.attributes_raw(), b"");
-        b.push_attribute(("x", "a"));
-        assert_eq!(b.len(), 10);
-        assert_eq!(b.attributes_raw(), b" x=\"a\"");
-        b.set_name(b"g");
-        assert_eq!(b.len(), 7);
-        assert_eq!(b.name(), QName(b"g"));
-    }
+    // #[test]
+    // fn bytestart_set_name() {
+    //     let mut b = BytesStart::new("test");
+    //     assert_eq!(b.len(), 4);
+    //     assert_eq!(b.name(), QName(b"test"));
+    //     assert_eq!(b.attributes_raw(), b"");
+    //     b.push_attribute(("x", "a"));
+    //     assert_eq!(b.len(), 10);
+    //     assert_eq!(b.attributes_raw(), b" x=\"a\"");
+    //     b.set_name(b"g");
+    //     assert_eq!(b.len(), 7);
+    //     assert_eq!(b.name(), QName(b"g"));
+    // }
 
-    #[test]
-    fn bytestart_clear_attributes() {
-        let mut b = BytesStart::new("test");
-        b.push_attribute(("x", "y\"z"));
-        b.push_attribute(("x", "y\"z"));
-        b.clear_attributes();
-        assert!(b.attributes().next().is_none());
-        assert_eq!(b.len(), 4);
-        assert_eq!(b.name(), QName(b"test"));
-    }
+    // #[test]
+    // fn bytestart_clear_attributes() {
+    //     let mut b = BytesStart::new("test");
+    //     b.push_attribute(("x", "y\"z"));
+    //     b.push_attribute(("x", "y\"z"));
+    //     b.clear_attributes();
+    //     assert!(b.attributes().next().is_none());
+    //     assert_eq!(b.len(), 4);
+    //     assert_eq!(b.name(), QName(b"test"));
+    // }
 }
