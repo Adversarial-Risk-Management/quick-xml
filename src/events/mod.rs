@@ -37,7 +37,7 @@
 
 pub mod attributes;
 
-mod zero_copy;
+pub mod zero_copy;
 
 #[cfg(feature = "encoding")]
 use encoding_rs::Encoding;
