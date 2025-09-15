@@ -50,11 +50,9 @@ use crate::escape::{
     escape, minimal_escape, normalize_xml10_eols, normalize_xml11_eols, parse_number,
     partial_escape, EscapeError,
 };
+use crate::events::attributes::{AttrError, Attribute, Attributes};
 use crate::name::{LocalName, QName};
-use crate::utils::{
-    name_len, trim_xml_end, trim_xml_start, write_byte_string, write_cow_string, Bytes,
-};
-use attributes::{AttrError, Attribute, Attributes};
+use crate::utils::{trim_xml_end, trim_xml_start, write_byte_string, write_cow_string, Bytes};
 
 /// Opening tag data (`Event::Start`), with optional attributes: `<name attr="value">`.
 ///
@@ -270,13 +268,13 @@ impl<'a> BytesStart<'a> {
     // }
 
     /// Returns an iterator over the attributes of this tag.
-    pub fn attributes(&self) -> Attributes<'_> {
-        Attributes::wrap(&self.buf, self.name_len, false, self.decoder)
+    pub fn attributes(&self) -> Attributes<'a> {
+        Attributes::wrap(self.buf, self.name_len, false, self.decoder)
     }
 
     /// Returns an iterator over the HTML-like attributes of this tag (no mandatory quotes or `=`).
-    pub fn html_attributes(&self) -> Attributes<'_> {
-        Attributes::wrap(&self.buf, self.name_len, true, self.decoder)
+    pub fn html_attributes(self) -> Attributes<'a> {
+        Attributes::wrap(self.buf, self.name_len, true, self.decoder)
     }
 
     /// Gets the undecoded raw string with the attributes of this tag as a `&[u8]`,
@@ -288,7 +286,7 @@ impl<'a> BytesStart<'a> {
 
     /// Try to get an attribute
     pub fn try_get_attribute<N: AsRef<[u8]> + Sized>(
-        &'a self,
+        &self,
         attr_name: N,
     ) -> Result<Option<Attribute<'a>>, AttrError> {
         for a in self.attributes().with_checks(false) {
@@ -1367,7 +1365,7 @@ impl<'a> BytesDecl<'a> {
     /// ```
     ///
     /// [grammar]: https://www.w3.org/TR/xml11/#NT-XMLDecl
-    pub fn encoding(&self) -> Option<Result<Cow<'_, [u8]>, AttrError>> {
+    pub fn encoding(&self) -> Option<Result<Cow<'a, [u8]>, AttrError>> {
         self.content
             .try_get_attribute("encoding")
             .map(|a| a.map(|a| a.value))
