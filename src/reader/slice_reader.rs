@@ -5,13 +5,13 @@
 use std::borrow::Cow;
 use std::io;
 
+use crate::events::zero_copy::EventRef;
 #[cfg(feature = "encoding")]
 use crate::reader::EncodingRef;
 #[cfg(feature = "encoding")]
 use encoding_rs::{Encoding, UTF_8};
 
 use crate::errors::{Error, Result};
-use crate::events::Event;
 use crate::name::QName;
 use crate::parser::Parser;
 use crate::reader::{BangType, ReadRefResult, ReadTextResult, Reader, Span, XmlSource};
@@ -71,7 +71,7 @@ impl<'a> Reader<&'a [u8]> {
     /// assert_eq!(txt, vec!["Test".to_string(), "Test 2".to_string()]);
     /// ```
     #[inline]
-    pub fn read_event(&mut self) -> Result<Event<'a>> {
+    pub fn read_event(&mut self) -> Result<EventRef<'a>> {
         self.read_event_impl(())
     }
 
@@ -390,8 +390,8 @@ impl<'a> XmlSource<'a, ()> for &'a [u8] {
 
 #[cfg(test)]
 mod test {
-    use crate::reader::test::check;
     use crate::reader::XmlSource;
+    use crate::reader::test::check;
 
     /// Default buffer constructor just pass the byte array from the test
     fn identity<T>(input: T) -> T {

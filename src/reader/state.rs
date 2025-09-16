@@ -3,7 +3,8 @@ use encoding_rs::UTF_8;
 
 use crate::encoding::Decoder;
 use crate::errors::{Error, IllFormedError, Result, SyntaxError};
-use crate::events::{BytesCData, BytesDecl, BytesEnd, BytesPI, BytesStart, BytesText, Event};
+use crate::events::zero_copy::{BytesDeclRef, BytesPIRef, BytesStartRef, EventRef};
+use crate::events::{BytesCData, BytesEnd, BytesText};
 #[cfg(feature = "encoding")]
 use crate::reader::EncodingRef;
 use crate::reader::{BangType, Config, ParseState};
@@ -78,7 +79,7 @@ impl ReaderState {
     /// - Comment: `!--...--`
     /// - Doctype (uppercase): `!D...`
     /// - Doctype (lowercase): `!d...`
-    pub fn emit_bang<'b>(&mut self, bang_type: BangType, buf: &'b [u8]) -> Result<Event<'b>> {
+    pub fn emit_bang<'b>(&mut self, bang_type: BangType, buf: &'b [u8]) -> Result<EventRef<'b>> {
         debug_assert_eq!(
             buf.first(),
             Some(&b'!'),
@@ -122,7 +123,7 @@ impl ReaderState {
                         haystack = &haystack[p + 1..];
                     }
                 }
-                Ok(Event::Comment(BytesText::wrap(
+                Ok(EventRef::Comment(BytesText::wrap(
                     // Cut of `!--` and `--` from start and end
                     &buf[3..len - 2],
                     self.decoder(),
@@ -134,7 +135,7 @@ impl ReaderState {
             // https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
             BangType::CData if buf.starts_with(b"![CDATA[") => {
                 debug_assert!(buf.ends_with(b"]]"));
-                Ok(Event::CData(BytesCData::wrap(
+                Ok(EventRef::CData(BytesCData::wrap(
                     // Cut of `![CDATA[` and `]]` from start and end
                     &buf[8..len - 2],
                     self.decoder(),
@@ -146,7 +147,7 @@ impl ReaderState {
             // https://html.spec.whatwg.org/multipage/parsing.html#markup-declaration-open-state
             BangType::DocType(0) if uncased_starts_with(buf, b"!DOCTYPE") => {
                 match buf[8..].iter().position(|&b| !is_whitespace(b)) {
-                    Some(start) => Ok(Event::DocType(BytesText::wrap(
+                    Some(start) => Ok(EventRef::DocType(BytesText::wrap(
                         // Cut of `!DOCTYPE` and any number of spaces from start
                         &buf[8 + start..],
                         self.decoder(),
@@ -174,7 +175,7 @@ impl ReaderState {
     /// end name matches the last opened start name if `self.config.check_end_names` is set.
     ///
     /// `buf` contains data between `<` and `>`, for example `/tag`.
-    pub fn emit_end<'b>(&mut self, buf: &'b [u8]) -> Result<Event<'b>> {
+    pub fn emit_end<'b>(&mut self, buf: &'b [u8]) -> Result<EventRef<'b>> {
         debug_assert_eq!(
             buf.first(),
             Some(&b'/'),
@@ -231,14 +232,14 @@ impl ReaderState {
             }
         }
 
-        Ok(Event::End(BytesEnd::wrap(name.into())))
+        Ok(EventRef::End(BytesEnd::wrap(name.into())))
     }
 
     /// `buf` contains data between `<` and `>` and the first byte is `?`.
     /// `self.offset` already after the `>`
     ///
     /// Returns `Decl` or `PI` event
-    pub fn emit_question_mark<'b>(&mut self, buf: &'b [u8]) -> Result<Event<'b>> {
+    pub fn emit_question_mark<'b>(&mut self, buf: &'b [u8]) -> Result<EventRef<'b>> {
         debug_assert!(!buf.is_empty());
         debug_assert_eq!(buf[0], b'?');
 
@@ -251,7 +252,8 @@ impl ReaderState {
             let len = content.len();
 
             if content.starts_with(b"xml") && (len == 3 || is_whitespace(content[3])) {
-                let event = BytesDecl::from_start(BytesStart::wrap(content, 3, self.decoder()));
+                let event =
+                    BytesDeclRef::from_start(BytesStartRef::wrap(content, 3, self.decoder()));
 
                 // Try getting encoding from the declaration event
                 #[cfg(feature = "encoding")]
@@ -261,9 +263,9 @@ impl ReaderState {
                     self.encoding = EncodingRef::XmlDetected(encoding);
                 }
 
-                Ok(Event::Decl(event))
+                Ok(EventRef::Decl(event))
             } else {
-                Ok(Event::PI(BytesPI::wrap(
+                Ok(EventRef::PI(BytesPIRef::wrap(
                     content,
                     name_len(content),
                     self.decoder(),
@@ -282,28 +284,28 @@ impl ReaderState {
     ///
     /// # Parameters
     /// - `content`: Content of a tag between `<` and `>`
-    pub fn emit_start<'b>(&mut self, content: &'b [u8]) -> Event<'b> {
+    pub fn emit_start<'b>(&mut self, content: &'b [u8]) -> EventRef<'b> {
         if let Some(content) = content.strip_suffix(b"/") {
             // This is self-closed tag `<something/>`
-            let event = BytesStart::wrap(content, name_len(content), self.decoder());
+            let event = BytesStartRef::wrap(content, name_len(content), self.decoder());
 
             if self.config.expand_empty_elements {
                 self.state = ParseState::InsideEmpty;
                 self.opened_starts.push(self.opened_buffer.len());
                 self.opened_buffer.extend(event.name().as_ref());
-                Event::Start(event)
+                EventRef::Start(event)
             } else {
-                Event::Empty(event)
+                EventRef::Empty(event)
             }
         } else {
-            let event = BytesStart::wrap(content, name_len(content), self.decoder());
+            let event = BytesStartRef::wrap(content, name_len(content), self.decoder());
 
             // #514: Always store names event when .check_end_names == false,
             // because checks can be temporary disabled and when they would be
             // enabled, we should have that information
             self.opened_starts.push(self.opened_buffer.len());
             self.opened_buffer.extend(event.name().as_ref());
-            Event::Start(event)
+            EventRef::Start(event)
         }
     }
 

@@ -8,6 +8,7 @@ use std::task::{Context, Poll};
 use tokio::io::{self, AsyncBufRead, AsyncBufReadExt, AsyncRead, ReadBuf};
 
 use crate::errors::{Error, IllFormedError, Result, SyntaxError};
+use crate::events::zero_copy::EventRef;
 use crate::events::{BytesRef, Event};
 use crate::name::{QName, ResolveResult};
 use crate::parser::{ElementParser, Parser, PiParser};
@@ -119,7 +120,7 @@ impl<R: AsyncBufRead + Unpin> Reader<R> {
     pub async fn read_event_into_async<'b>(
         &mut self,
         mut buf: &'b mut Vec<u8>,
-    ) -> Result<Event<'b>> {
+    ) -> Result<EventRef<'b>> {
         read_event_impl!(
             self,
             buf,
@@ -262,7 +263,10 @@ impl<R: AsyncBufRead + Unpin> NsReader<R> {
     /// [`read_event_into()`]: NsReader::read_event_into
     /// [`resolver().resolve_element()`]: crate::name::NamespaceResolver::resolve_element
     /// [`read_resolved_event_into_async()`]: Self::read_resolved_event_into_async
-    pub async fn read_event_into_async<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
+    pub async fn read_event_into_async<'b>(
+        &mut self,
+        buf: &'b mut Vec<u8>,
+    ) -> Result<EventRef<'b>> {
         self.pop();
         let event = self.reader.read_event_into_async(buf).await;
         self.process_event(event)
@@ -405,7 +409,7 @@ impl<R: AsyncBufRead + Unpin> NsReader<R> {
         // "implicit elided lifetime not allowed here" on ResolveResult
         &'ns mut self,
         buf: &'b mut Vec<u8>,
-    ) -> Result<(ResolveResult<'ns>, Event<'b>)> {
+    ) -> Result<(ResolveResult<'ns>, EventRef<'b>)> {
         let event = self.read_event_into_async(buf).await?;
         Ok(self.resolver().resolve_event(event))
     }

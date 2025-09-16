@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
 use crate::errors::{Error, Result};
-use crate::events::Event;
+use crate::events::zero_copy::EventRef;
 use crate::name::QName;
 use crate::parser::Parser;
 use crate::reader::{BangType, ReadRefResult, ReadTextResult, Reader, Span, XmlSource};
@@ -383,7 +383,7 @@ impl<R: BufRead> Reader<R> {
     /// assert_eq!(txt, vec!["Test".to_string(), "Test 2".to_string()]);
     /// ```
     #[inline]
-    pub fn read_event_into<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<Event<'b>> {
+    pub fn read_event_into<'b>(&mut self, buf: &'b mut Vec<u8>) -> Result<EventRef<'b>> {
         self.read_event_impl(buf)
     }
 
@@ -493,8 +493,8 @@ impl Reader<BufReader<File>> {
 
 #[cfg(test)]
 mod test {
-    use crate::reader::test::check;
     use crate::reader::XmlSource;
+    use crate::reader::test::check;
 
     /// Default buffer constructor just pass the byte array from the test
     fn identity<T>(input: T) -> T {

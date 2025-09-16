@@ -39,21 +39,15 @@
 use encoding_rs::Encoding;
 use std::borrow::Cow;
 use std::fmt::{self, Debug, Formatter};
-use std::iter::FusedIterator;
-use std::mem::replace;
 use std::ops::Deref;
 use std::str::from_utf8;
 
-use crate::encoding::{Decoder, EncodingError};
+use crate::encoding::Decoder;
 use crate::errors::{Error, IllFormedError};
-use crate::escape::{
-    escape, minimal_escape, normalize_xml10_eols, normalize_xml11_eols, parse_number,
-    partial_escape, EscapeError,
-};
 use crate::events::attributes::{AttrError, Attribute, Attributes};
-use crate::events::{BytesCData, BytesEnd, BytesText};
+use crate::events::{BytesCData, BytesEnd, BytesRef, BytesText};
 use crate::name::{LocalName, QName};
-use crate::utils::{trim_xml_end, trim_xml_start, write_byte_string, write_cow_string, Bytes};
+use crate::utils::write_byte_string;
 
 /// Opening tag data (`Event::Start`), with optional attributes: `<name attr="value">`.
 ///
@@ -521,7 +515,7 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesPIRef<'a> {
         Ok(Self::new(<&str>::arbitrary(u)?))
     }
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        return <&str as arbitrary::Arbitrary>::size_hint(depth);
+        <&str as arbitrary::Arbitrary>::size_hint(depth)
     }
 }
 
@@ -804,213 +798,6 @@ impl<'a> arbitrary::Arbitrary<'a> for BytesDeclRef<'a> {
         //     Option::<&str>::arbitrary(u)?,
         //     Option::<&str>::arbitrary(u)?,
         // ))
-    }
-
-    fn size_hint(depth: usize) -> (usize, Option<usize>) {
-        return <&str as arbitrary::Arbitrary>::size_hint(depth);
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-/// Character or general entity reference (`Event::GeneralRef`): `&ref;` or `&#<number>;`.
-///
-/// This event implements `Deref<Target = [u8]>`. The `deref()` implementation
-/// returns the content of this event between `&` and `;`:
-///
-/// ```
-/// # use quick_xml::events::{BytesRef, Event};
-/// # use quick_xml::reader::Reader;
-/// # use pretty_assertions::assert_eq;
-/// let mut reader = Reader::from_str(r#"&entity;"#);
-/// let content = "entity";
-/// let event = BytesRef::new(content);
-///
-/// assert_eq!(reader.read_event().unwrap(), Event::GeneralRef(event.borrow()));
-/// // deref coercion of &BytesRef to &[u8]
-/// assert_eq!(&event as &[u8], content.as_bytes());
-/// // AsRef<[u8]> for &T + deref coercion
-/// assert_eq!(event.as_ref(), content.as_bytes());
-/// ```
-#[derive(Clone, Eq, PartialEq)]
-pub struct BytesRef<'a> {
-    content: Cow<'a, [u8]>,
-    /// Encoding in which the `content` is stored inside the event.
-    decoder: Decoder,
-}
-
-impl<'a> BytesRef<'a> {
-    /// Internal constructor, used by `Reader`. Supplies data in reader's encoding
-    #[inline]
-    pub(crate) const fn wrap(content: &'a [u8], decoder: Decoder) -> Self {
-        Self {
-            content: Cow::Borrowed(content),
-            decoder,
-        }
-    }
-
-    /// Creates a new `BytesRef` borrowing a slice.
-    ///
-    /// # Warning
-    ///
-    /// `name` must be a valid name.
-    #[inline]
-    pub fn new<C: Into<Cow<'a, str>>>(name: C) -> Self {
-        Self {
-            content: str_cow_to_bytes(name),
-            decoder: Decoder::utf8(),
-        }
-    }
-
-    /// Converts the event into an owned event.
-    pub fn into_owned(self) -> BytesRef<'static> {
-        BytesRef {
-            content: Cow::Owned(self.content.into_owned()),
-            decoder: self.decoder,
-        }
-    }
-
-    /// Extracts the inner `Cow` from the `BytesRef` event container.
-    #[inline]
-    pub fn into_inner(self) -> Cow<'a, [u8]> {
-        self.content
-    }
-
-    /// Converts the event into a borrowed event.
-    #[inline]
-    pub fn borrow(&self) -> BytesRef<'_> {
-        BytesRef {
-            content: Cow::Borrowed(&self.content),
-            decoder: self.decoder,
-        }
-    }
-
-    /// Decodes the content of the event.
-    ///
-    /// This will allocate if the value contains any escape sequences or in
-    /// non-UTF-8 encoding.
-    ///
-    /// This method does not normalizes end-of-line characters as required by [specification].
-    /// Usually you need [`xml_content()`](Self::xml_content) instead of this method.
-    ///
-    /// [specification]: https://www.w3.org/TR/xml11/#sec-line-ends
-    pub fn decode(&self) -> Result<Cow<'a, str>, EncodingError> {
-        self.decoder.decode_cow(&self.content)
-    }
-
-    /// Decodes the content of the XML 1.0 or HTML event.
-    ///
-    /// When this event produced by the reader, it uses the encoding information
-    /// associated with that reader to interpret the raw bytes contained within
-    /// this general reference event.
-    ///
-    /// This will allocate if the value in non-UTF-8 encoding, or EOL normalization
-    /// is required.
-    ///
-    /// Note, that this method should be used only if event represents XML 1.0 or HTML content,
-    /// because rules for normalizing EOLs for [XML 1.0] / [HTML] and [XML 1.1] differs.
-    ///
-    /// This method also can be used to get HTML content, because rules the same.
-    ///
-    /// [XML 1.0]: https://www.w3.org/TR/xml/#sec-line-ends
-    /// [XML 1.1]: https://www.w3.org/TR/xml11/#sec-line-ends
-    /// [HTML]: https://html.spec.whatwg.org/#normalize-newlines
-    pub fn xml10_content(&self) -> Result<Cow<'a, str>, EncodingError> {
-        self.decoder.content(&self.content, normalize_xml10_eols)
-    }
-
-    /// Decodes the content of the XML 1.1 event.
-    ///
-    /// When this event produced by the reader, it uses the encoding information
-    /// associated with that reader to interpret the raw bytes contained within
-    /// this general reference event.
-    ///
-    /// This will allocate if the value in non-UTF-8 encoding, or EOL normalization
-    /// is required.
-    ///
-    /// Note, that this method should be used only if event represents XML 1.1 content,
-    /// because rules for normalizing EOLs for [XML 1.0] / [HTML] and [XML 1.1] differs.
-    ///
-    /// To get HTML content use [`xml10_content()`](Self::xml10_content).
-    ///
-    /// [XML 1.0]: https://www.w3.org/TR/xml/#sec-line-ends
-    /// [XML 1.1]: https://www.w3.org/TR/xml11/#sec-line-ends
-    /// [HTML]: https://html.spec.whatwg.org/#normalize-newlines
-    pub fn xml11_content(&self) -> Result<Cow<'a, str>, EncodingError> {
-        self.decoder.content(&self.content, normalize_xml11_eols)
-    }
-
-    /// Alias for [`xml11_content()`](Self::xml11_content).
-    #[inline]
-    pub fn xml_content(&self) -> Result<Cow<'a, str>, EncodingError> {
-        self.xml11_content()
-    }
-
-    /// Alias for [`xml10_content()`](Self::xml10_content).
-    #[inline]
-    pub fn html_content(&self) -> Result<Cow<'a, str>, EncodingError> {
-        self.xml10_content()
-    }
-
-    /// Returns `true` if the specified reference represents the character reference
-    /// (`&#<number>;`).
-    ///
-    /// ```
-    /// # use quick_xml::events::BytesRef;
-    /// # use pretty_assertions::assert_eq;
-    /// assert_eq!(BytesRef::new("#x30").is_char_ref(), true);
-    /// assert_eq!(BytesRef::new("#49" ).is_char_ref(), true);
-    /// assert_eq!(BytesRef::new("lt"  ).is_char_ref(), false);
-    /// ```
-    pub fn is_char_ref(&self) -> bool {
-        matches!(self.content.first(), Some(b'#'))
-    }
-
-    /// If this reference represents character reference, then resolves it and
-    /// returns the character, otherwise returns `None`.
-    ///
-    /// This method does not check if character is allowed for XML, in other words,
-    /// well-formedness constraint [WFC: Legal Char] is not enforced.
-    /// The character `0x0`, however, will return `EscapeError::InvalidCharRef`.
-    ///
-    /// ```
-    /// # use quick_xml::events::BytesRef;
-    /// # use pretty_assertions::assert_eq;
-    /// assert_eq!(BytesRef::new("#x30").resolve_char_ref().unwrap(), Some('0'));
-    /// assert_eq!(BytesRef::new("#49" ).resolve_char_ref().unwrap(), Some('1'));
-    /// assert_eq!(BytesRef::new("lt"  ).resolve_char_ref().unwrap(), None);
-    /// ```
-    ///
-    /// [WFC: Legal Char]: https://www.w3.org/TR/xml11/#wf-Legalchar
-    pub fn resolve_char_ref(&self) -> Result<Option<char>, Error> {
-        if let Some(num) = self.decode()?.strip_prefix('#') {
-            let ch = parse_number(num).map_err(EscapeError::InvalidCharRef)?;
-            return Ok(Some(ch));
-        }
-        Ok(None)
-    }
-}
-
-impl<'a> Debug for BytesRef<'a> {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "BytesRef {{ content: ")?;
-        write_cow_string(f, &self.content)?;
-        write!(f, " }}")
-    }
-}
-
-impl<'a> Deref for BytesRef<'a> {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.content
-    }
-}
-
-#[cfg(feature = "arbitrary")]
-impl<'a> arbitrary::Arbitrary<'a> for BytesRef<'a> {
-    fn arbitrary(u: &mut arbitrary::Unstructured<'a>) -> arbitrary::Result<Self> {
-        Ok(Self::new(<&str>::arbitrary(u)?))
     }
 
     fn size_hint(depth: usize) -> (usize, Option<usize>) {
