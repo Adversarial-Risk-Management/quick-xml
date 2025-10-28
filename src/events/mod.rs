@@ -37,6 +37,8 @@
 
 pub mod attributes;
 
+pub mod zero_copy;
+
 #[cfg(feature = "encoding")]
 use encoding_rs::Encoding;
 use std::borrow::Cow;

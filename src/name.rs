@@ -4,7 +4,7 @@
 //! [spec]: https://www.w3.org/TR/xml-names11
 
 use crate::events::attributes::Attribute;
-use crate::events::{BytesStart, Event};
+use crate::events::zero_copy::{BytesStartRef, EventRef};
 use crate::utils::write_byte_string;
 use memchr::memchr;
 use std::fmt::{self, Debug, Formatter};
@@ -656,13 +656,15 @@ impl NamespaceResolver {
     /// the specified start element.
     ///
     /// [namespace bindings]: https://www.w3.org/TR/xml-names11/#dt-NSDecl
-    pub fn push(&mut self, start: &BytesStart) -> Result<(), NamespaceError> {
+    pub fn push(&mut self, start: &BytesStartRef) -> Result<(), NamespaceError> {
         self.nesting_level += 1;
         // adds new namespaces for attributes starting with 'xmlns:' and for the 'xmlns'
         // (default namespace) attribute.
         for a in start.attributes().with_checks(false) {
             if let Ok(Attribute { key: k, value: v }) = a {
-                if let Some(prefix) = k.as_namespace_binding() { self.add(prefix, Namespace(&v))? }
+                if let Some(prefix) = k.as_namespace_binding() {
+                    self.add(prefix, Namespace(&v))?
+                }
             } else {
                 break;
             }
@@ -803,8 +805,8 @@ impl NamespaceResolver {
     /// [`Empty`]: Event::Empty
     /// [`Start`]: Event::Start
     /// [`End`]: Event::End
-    pub fn resolve_event<'i>(&self, event: Event<'i>) -> (ResolveResult<'_>, Event<'i>) {
-        use Event::*;
+    pub fn resolve_event<'i>(&self, event: EventRef<'i>) -> (ResolveResult<'_>, EventRef<'i>) {
+        use EventRef::*;
 
         match event {
             Empty(e) => (self.resolve_prefix(e.name().prefix(), true), Empty(e)),
@@ -1131,8 +1133,8 @@ impl<'a> FusedIterator for NamespaceBindingsOfLevelIter<'a> {}
 #[cfg(test)]
 mod namespaces {
     use super::*;
-    use pretty_assertions::assert_eq;
     use ResolveResult::*;
+    use pretty_assertions::assert_eq;
 
     /// Unprefixed attribute names (resolved with `false` flag) never have a namespace
     /// according to <https://www.w3.org/TR/xml-names11/#defaulting>:
@@ -1155,12 +1157,12 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns='default'", 0))
+                .push(&BytesStartRef::from_content(" xmlns='default'", 0))
                 .unwrap();
             assert_eq!(&resolver.buffer[s..], b"default");
 
             // Check that tags without namespaces does not change result
-            resolver.push(&BytesStart::from_content("", 0)).unwrap();
+            resolver.push(&BytesStartRef::from_content("", 0)).unwrap();
             assert_eq!(&resolver.buffer[s..], b"default");
             resolver.pop();
 
@@ -1186,10 +1188,10 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns='old'", 0))
+                .push(&BytesStartRef::from_content(" xmlns='old'", 0))
                 .unwrap();
             resolver
-                .push(&BytesStart::from_content(" xmlns='new'", 0))
+                .push(&BytesStartRef::from_content(" xmlns='new'", 0))
                 .unwrap();
 
             assert_eq!(&resolver.buffer[s..], b"oldnew");
@@ -1227,10 +1229,10 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns='old'", 0))
+                .push(&BytesStartRef::from_content(" xmlns='old'", 0))
                 .unwrap();
             resolver
-                .push(&BytesStart::from_content(" xmlns=''", 0))
+                .push(&BytesStartRef::from_content(" xmlns=''", 0))
                 .unwrap();
 
             assert_eq!(&resolver.buffer[s..], b"old");
@@ -1270,12 +1272,12 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns:p='default'", 0))
+                .push(&BytesStartRef::from_content(" xmlns:p='default'", 0))
                 .unwrap();
             assert_eq!(&resolver.buffer[s..], b"pdefault");
 
             // Check that tags without namespaces does not change result
-            resolver.push(&BytesStart::from_content("", 0)).unwrap();
+            resolver.push(&BytesStartRef::from_content("", 0)).unwrap();
             assert_eq!(&resolver.buffer[s..], b"pdefault");
             resolver.pop();
 
@@ -1301,10 +1303,10 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns:p='old'", 0))
+                .push(&BytesStartRef::from_content(" xmlns:p='old'", 0))
                 .unwrap();
             resolver
-                .push(&BytesStart::from_content(" xmlns:p='new'", 0))
+                .push(&BytesStartRef::from_content(" xmlns:p='new'", 0))
                 .unwrap();
 
             assert_eq!(&resolver.buffer[s..], b"poldpnew");
@@ -1342,10 +1344,10 @@ mod namespaces {
             let s = resolver.buffer.len();
 
             resolver
-                .push(&BytesStart::from_content(" xmlns:p='old'", 0))
+                .push(&BytesStartRef::from_content(" xmlns:p='old'", 0))
                 .unwrap();
             resolver
-                .push(&BytesStart::from_content(" xmlns:p=''", 0))
+                .push(&BytesStartRef::from_content(" xmlns:p=''", 0))
                 .unwrap();
 
             assert_eq!(&resolver.buffer[s..], b"poldp");
@@ -1407,7 +1409,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 resolver.push(
-                    &BytesStart::from_content(
+                    &BytesStartRef::from_content(
                         " xmlns:xml='http://www.w3.org/XML/1998/namespace'",
                         0,
                     ),
@@ -1421,7 +1423,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(
+                    resolver.push(&BytesStartRef::from_content(
                         " xmlns:xml='not_correct_namespace'",
                         0,
                     )),
@@ -1438,7 +1440,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(" xmlns:xml=''", 0)),
+                    resolver.push(&BytesStartRef::from_content(" xmlns:xml=''", 0)),
                     Err(NamespaceError::InvalidXmlPrefixBind(b"".to_vec())),
                 );
                 assert_eq!(&resolver.buffer[s..], b"");
@@ -1450,7 +1452,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(
+                    resolver.push(&BytesStartRef::from_content(
                         " xmlns:not_xml='http://www.w3.org/XML/1998/namespace'",
                         0,
                     )),
@@ -1489,7 +1491,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(
+                    resolver.push(&BytesStartRef::from_content(
                         " xmlns:xmlns='http://www.w3.org/2000/xmlns/'",
                         0,
                     )),
@@ -1506,7 +1508,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(
+                    resolver.push(&BytesStartRef::from_content(
                         " xmlns:xmlns='not_correct_namespace'",
                         0,
                     )),
@@ -1523,7 +1525,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(" xmlns:xmlns=''", 0)),
+                    resolver.push(&BytesStartRef::from_content(" xmlns:xmlns=''", 0)),
                     Err(NamespaceError::InvalidXmlnsPrefixBind(b"".to_vec())),
                 );
                 assert_eq!(&resolver.buffer[s..], b"");
@@ -1535,7 +1537,7 @@ mod namespaces {
                 let mut resolver = NamespaceResolver::default();
                 let s = resolver.buffer.len();
                 assert_eq!(
-                    resolver.push(&BytesStart::from_content(
+                    resolver.push(&BytesStartRef::from_content(
                         " xmlns:not_xmlns='http://www.w3.org/2000/xmlns/'",
                         0,
                     )),

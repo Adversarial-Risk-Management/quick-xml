@@ -7,7 +7,8 @@ use std::ops::Range;
 
 use crate::encoding::Decoder;
 use crate::errors::{Error, IllFormedError, SyntaxError};
-use crate::events::{BytesRef, Event};
+use crate::events::BytesRef;
+use crate::events::zero_copy::EventRef;
 use crate::parser::{ElementParser, Parser, PiParser};
 use crate::reader::state::ReaderState;
 
@@ -285,12 +286,12 @@ macro_rules! read_event_impl {
                         ReadRefResult::Ref(bytes) => {
                             $self.state.state = ParseState::InsideText;
                             // +1 to skip start `&`
-                            Ok(Event::GeneralRef(BytesRef::wrap(&bytes[1..], $self.decoder())))
+                            Ok(EventRef::GeneralRef(BytesRef::wrap(&bytes[1..], $self.decoder())))
                         }
                         // Go to Done state
                         ReadRefResult::UpToEof(bytes) if $self.state.config.allow_dangling_amp => {
                             $self.state.state = ParseState::Done;
-                            Ok(Event::Text($self.state.emit_text(bytes)))
+                            Ok(EventRef::Text($self.state.emit_text(bytes)))
                         }
                         ReadRefResult::UpToEof(_) => {
                             $self.state.state = ParseState::Done;
@@ -299,7 +300,7 @@ macro_rules! read_event_impl {
                         }
                         // Do not change state, stay in InsideRef
                         ReadRefResult::UpToRef(bytes) if $self.state.config.allow_dangling_amp => {
-                            Ok(Event::Text($self.state.emit_text(bytes)))
+                            Ok(EventRef::Text($self.state.emit_text(bytes)))
                         }
                         ReadRefResult::UpToRef(_) => {
                             $self.state.last_error_offset = start;
@@ -308,7 +309,7 @@ macro_rules! read_event_impl {
                         // Go to InsideMarkup state
                         ReadRefResult::UpToMarkup(bytes) if $self.state.config.allow_dangling_amp => {
                             $self.state.state = ParseState::InsideMarkup;
-                            Ok(Event::Text($self.state.emit_text(bytes)))
+                            Ok(EventRef::Text($self.state.emit_text(bytes)))
                         }
                         ReadRefResult::UpToMarkup(_) => {
                             $self.state.state = ParseState::InsideMarkup;
@@ -342,21 +343,21 @@ macro_rules! read_event_impl {
                             // - event contains only spaces
                             // - trim_text_start = false
                             // - trim_text_end = true
-                            Ok(Event::Text($self.state.emit_text(bytes)))
+                            Ok(EventRef::Text($self.state.emit_text(bytes)))
                         }
                         ReadTextResult::UpToRef(bytes) => {
                             $self.state.state = ParseState::InsideRef;
                             // Return Text event with `bytes` content or Eof if bytes is empty
-                            Ok(Event::Text($self.state.emit_text(bytes)))
+                            Ok(EventRef::Text($self.state.emit_text(bytes)))
                         }
                         ReadTextResult::UpToEof(bytes) => {
                             $self.state.state = ParseState::Done;
                             // Trim bytes from end if required
                             let event = $self.state.emit_text(bytes);
                             if event.is_empty() {
-                                Ok(Event::Eof)
+                                Ok(EventRef::Eof)
                             } else {
-                                Ok(Event::Text(event))
+                                Ok(EventRef::Text(event))
                             }
                         }
                         ReadTextResult::Err(e) => Err(Error::Io(e.into())),
@@ -364,15 +365,15 @@ macro_rules! read_event_impl {
                 },
                 // Go to InsideText state in next two arms
                 ParseState::InsideMarkup => $self.$read_until_close($buf) $(.$await)?,
-                ParseState::InsideEmpty => Ok(Event::End($self.state.close_expanded_empty())),
-                ParseState::Done => Ok(Event::Eof),
+                ParseState::InsideEmpty => Ok(EventRef::End($self.state.close_expanded_empty())),
+                ParseState::Done => Ok(EventRef::Eof),
             };
         };
         match event {
             // #513: In case of ill-formed errors we already consume the wrong data
             // and change the state. We can continue parsing if we wish
             Err(Error::IllFormed(_)) => {}
-            Err(_) | Ok(Event::Eof) => $self.state.state = ParseState::Done,
+            Err(_) | Ok(EventRef::Eof) => $self.state.state = ParseState::Done,
             _ => {}
         }
         event
@@ -519,15 +520,15 @@ macro_rules! read_to_end {
                     return Err(e);
                 }
 
-                Ok(Event::Start(e)) if e.name() == $end => depth += 1,
-                Ok(Event::End(e)) if e.name() == $end => {
+                Ok(EventRef::Start(e)) if e.name() == $end => depth += 1,
+                Ok(EventRef::End(e)) if e.name() == $end => {
                     if depth == 0 {
                         $self.config_mut().trim_text_start = trim;
                         break start..end;
                     }
                     depth -= 1;
                 }
-                Ok(Event::Eof) => {
+                Ok(EventRef::Eof) => {
                     $self.config_mut().trim_text_start = trim;
                     return Err(Error::missed_end($end, $self.decoder()));
                 }
@@ -983,7 +984,7 @@ impl<R> Reader<R> {
     /// Read text into the given buffer, and return an event that borrows from
     /// either that buffer or from the input itself, based on the type of the
     /// reader.
-    fn read_event_impl<'i, B>(&mut self, mut buf: B) -> Result<Event<'i>, Error>
+    fn read_event_impl<'i, B>(&mut self, mut buf: B) -> Result<EventRef<'i>, Error>
     where
         R: XmlSource<'i, B>,
     {
@@ -992,7 +993,7 @@ impl<R> Reader<R> {
 
     /// Private function to read until `>` is found. This function expects that
     /// it was called just after encounter a `<` symbol.
-    fn read_until_close<'i, B>(&mut self, buf: B) -> Result<Event<'i>, Error>
+    fn read_until_close<'i, B>(&mut self, buf: B) -> Result<EventRef<'i>, Error>
     where
         R: XmlSource<'i, B>,
     {
@@ -2076,7 +2077,7 @@ mod test {
 
             /// Ensures, that no empty `Text` events are generated
             mod $read_event {
-                use crate::events::{BytesCData, BytesDecl, BytesEnd, BytesPI, BytesStart, BytesText, Event};
+                use crate::events::{BytesCData, zero_copy::BytesDeclRef, BytesEnd, BytesText, zero_copy::EventRef};
                 use crate::reader::Reader;
                 use pretty_assertions::assert_eq;
 
@@ -2091,12 +2092,12 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Text(BytesText::from_escaped("\u{feff}"))
+                        EventRef::Text(BytesText::from_escaped("\u{feff}"))
                     );
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Eof
+                        EventRef::Eof
                     );
                 }
 
@@ -2111,12 +2112,12 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Text(BytesText::from_escaped("\u{feff}"))
+                        EventRef::Text(BytesText::from_escaped("\u{feff}"))
                     );
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Eof
+                        EventRef::Eof
                     );
                 }
 
@@ -2126,7 +2127,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Decl(BytesDecl::from_start(BytesStart::from_content("xml ", 3)))
+                        EventRef::Decl(BytesDeclRef::from_start($crate::events::zero_copy::BytesStartRef::from_content("xml ", 3)))
                     );
                 }
 
@@ -2136,7 +2137,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::DocType(BytesText::from_escaped("x"))
+                        EventRef::DocType(BytesText::from_escaped("x"))
                     );
                 }
 
@@ -2146,7 +2147,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::PI(BytesPI::new("xml-stylesheet '? >\" "))
+                        EventRef::PI($crate::events::zero_copy::BytesPIRef::new("xml-stylesheet '? >\" "))
                     );
                 }
 
@@ -2157,12 +2158,12 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Start(BytesStart::new("tag"))
+                        EventRef::Start($crate::events::zero_copy::BytesStartRef::new("tag"))
                     );
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::End(BytesEnd::new("tag"))
+                        EventRef::End(BytesEnd::new("tag"))
                     );
                 }
 
@@ -2172,7 +2173,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Empty(BytesStart::new("tag"))
+                        EventRef::Empty($crate::events::zero_copy::BytesStartRef::new("tag"))
                     );
                 }
 
@@ -2182,7 +2183,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Text(BytesText::from_escaped("text"))
+                        EventRef::Text(BytesText::from_escaped("text"))
                     );
                 }
 
@@ -2192,7 +2193,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::CData(BytesCData::new(""))
+                        EventRef::CData(BytesCData::new(""))
                     );
                 }
 
@@ -2202,7 +2203,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Comment(BytesText::from_escaped(""))
+                        EventRef::Comment(BytesText::from_escaped(""))
                     );
                 }
 
@@ -2212,7 +2213,7 @@ mod test {
 
                     assert_eq!(
                         reader.$read_event($buf) $(.$await)? .unwrap(),
-                        Event::Eof
+                        EventRef::Eof
                     );
                 }
             }
